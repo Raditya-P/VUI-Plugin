@@ -1,0 +1,37 @@
+name: vui_plugin
+description: >
+  A Flutter plugin for Voice User Interface (VUI) using Android Accessibility Service.
+  Provides on-device speech recognition with rule-based NLP for Indonesian language,
+  enabling voice-controlled navigation, form filling, and command execution.
+version: 0.1.0
+homepage: https://github.com/Raditya-P/VUI-Plugin
+repository: https://github.com/Raditya-P/VUI-Plugin
+issue_tracker: https://github.com/Raditya-P/VUI-Plugin/issues
+
+topics:
+  - voice
+  - accessibility
+  - nlp
+  - speech-recognition
+  - indonesian
+
+environment:
+  sdk: ^3.9.2
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  plugin_platform_interface: ^2.0.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.example.vui_plugin
+        pluginClass: VuiPlugin
