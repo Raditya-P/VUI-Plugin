@@ -1,3 +1,9 @@
+## 0.1.1
+
+* Re-added `EXTRA_PREFER_OFFLINE` flag for offline speech recognition support
+* Plugin now prefers offline language model when available, enabling fully offline usage
+* Existing auto-retry and recreate-on-demand patterns handle devices without offline language packs
+
 ## 0.1.0
 
 * Initial release

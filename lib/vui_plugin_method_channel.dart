@@ -32,4 +32,16 @@ class MethodChannelVuiPlugin extends VuiPluginPlatform {
     final result = await methodChannel.invokeMethod<List<dynamic>>('getAvailableCommands');
     return result?.cast<String>() ?? [];
   }
+
+  @override
+  Future<bool> isAccessibilityEnabled() async {
+    final result = await methodChannel.invokeMethod<bool>('isAccessibilityEnabled');
+    return result ?? false;
+  }
+
+  @override
+  Future<bool> openAccessibilitySettings() async {
+    final result = await methodChannel.invokeMethod<bool>('openAccessibilitySettings');
+    return result ?? false;
+  }
 }

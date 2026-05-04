@@ -40,4 +40,14 @@ abstract class VuiPluginPlatform extends PlatformInterface {
   Future<List<String>> getAvailableCommands() {
     throw UnimplementedError('getAvailableCommands() has not been implemented.');
   }
+
+  /// Check if VUI accessibility service is enabled
+  Future<bool> isAccessibilityEnabled() {
+    throw UnimplementedError('isAccessibilityEnabled() has not been implemented.');
+  }
+
+  /// Open Android Accessibility Settings page
+  Future<bool> openAccessibilitySettings() {
+    throw UnimplementedError('openAccessibilitySettings() has not been implemented.');
+  }
 }

@@ -64,4 +64,14 @@ class VuiPlugin {
   Future<List<String>> getAvailableCommands() {
     return VuiPluginPlatform.instance.getAvailableCommands();
   }
+
+  /// Check if VUI accessibility service is enabled
+  Future<bool> isAccessibilityEnabled() {
+    return VuiPluginPlatform.instance.isAccessibilityEnabled();
+  }
+
+  /// Open Android Accessibility Settings page
+  Future<bool> openAccessibilitySettings() {
+    return VuiPluginPlatform.instance.openAccessibilitySettings();
+  }
 }

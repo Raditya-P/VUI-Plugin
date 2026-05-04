@@ -34,8 +34,15 @@ class NlpEngine {
     fun processText(text: String): VuiCommand? {
         Log.d(TAG, "Processing text: $text")
         var lowerText = text.lowercase().trim()
-        // Normalize: Google Speech often recognizes Indonesian 'stok' as English 'stock'
+        // Normalize: Google Speech often recognizes Indonesian 'stok' as English 'stock' or 'stop'
         lowerText = lowerText.replace("stock", "stok")
+        // 'stop' → 'stok' only when it appears in stok-related command patterns
+        // e.g. "tambah stop" → "tambah stok", "isi stop" → "isi stok", "tambahkan stop" → "tambahkan stok"
+        lowerText = lowerText.replace(Regex("""(?<=tambah |tambahkan |tambahin |isi |isikan |catat |masuk |masukkan |cek |lihat |riwayat )stop"""), "stok")
+        // Also handle "stop saat ini" → "stok saat ini" (SET_FIELD for current stock)
+        lowerText = lowerText.replace(Regex("""^stop\s+saat"""), "stok saat")
+        // Handle standalone "stop" at the beginning followed by a number (SET_FIELD: "stok 10")
+        lowerText = lowerText.replace(Regex("""^stop\s+(\d)"""), "stok $1")
         
         // Try SET_FIELD first to prevent "harga beli X" from matching QUICK_BUY
         // Then try quick commands, then navigation
@@ -65,8 +72,9 @@ class NlpEngine {
                 VuiCommand(intent = "NAV_PRODUCT_LIST", rawText = text)
             }
             // Navigate to add product (only if no product name follows)
-            (text == "tambah produk" || text == "tambah barang" || 
-             text == "produk baru" || text == "barang baru") -> {
+            text in listOf("tambah produk", "tambah barang", "tambahkan produk", "tambahkan barang",
+                "tambahin produk", "tambahin barang", "produk baru", "barang baru",
+                "bikin produk baru", "buat produk baru") -> {
                 VuiCommand(intent = "NAV_ADD_PRODUCT", rawText = text)
             }
             // Navigate to stock history
@@ -79,12 +87,12 @@ class NlpEngine {
             text.contains("catat penjualan") -> {
                 VuiCommand(intent = "NAV_SALES", rawText = text)
             }
-            // Navigate to add stock
-            text.contains("isi stok") || text.contains("tambah stok") && !extractProductName(text).isNullOrEmpty() -> {
+            // Navigate to add stock - check if product name is present
+            (text.contains("isi stok") || text.contains("tambah stok") || text.contains("tambahkan stok") || text.contains("tambahin stok")) && !extractProductName(text).isNullOrEmpty() -> {
                 // If product name mentioned, this is ADD_STOCK action, not navigation
                 null
             }
-            text.contains("isi stok") || (text.contains("tambah stok") && extractProductName(text).isNullOrEmpty()) -> {
+            text.contains("isi stok") || text.contains("tambah stok") || text.contains("tambahkan stok") || text.contains("tambahin stok") -> {
                 VuiCommand(intent = "NAV_ADD_STOCK", rawText = text)
             }
             else -> null
@@ -94,11 +102,21 @@ class NlpEngine {
     // ===== ADD STOCK COMMAND =====
     
     private fun tryParseAddStock(text: String): VuiCommand? {
-        // Pattern: "tambah stok [product] [quantity]" or "isi stok [product] [quantity]"
+        val numPattern = """\d+|${numberWords.keys.joinToString("|")}"""
+        
+        // Patterns for "tambah stok" with flexible word order and verb variants
         val addStokPatterns = listOf(
-            Regex("""(?:tambah|isi)\s+stok\s+(.+?)\s+(\d+|${numberWords.keys.joinToString("|")})(?:\s|$)"""),
-            Regex("""(?:tambah|isi)\s+stok\s+(\d+|${numberWords.keys.joinToString("|")})\s+(.+)"""),
-            Regex("""stok\s+(.+?)\s+(?:tambah|plus)\s+(\d+|${numberWords.keys.joinToString("|")})""")
+            // "tambah stok chocolatos 5" / "tambahkan stok chocolatos 5" / "tambahin stok chocolatos 5"
+            Regex("""(?:tambah|tambahkan|tambahin|isi|isikan|masukkan|masuk)\s+stok\s+(.+?)\s+($numPattern)(?:\s|$)"""),
+            // "tambah stok 5 chocolatos" / "tambahkan stok 5 chocolatos"
+            Regex("""(?:tambah|tambahkan|tambahin|isi|isikan|masukkan|masuk)\s+stok\s+($numPattern)\s+(.+)"""),
+            // "tambahkan 5 stok chocolatos" / "tambahin 5 stok chocolatos"
+            Regex("""(?:tambah|tambahkan|tambahin|isi|isikan|masukkan|masuk)\s+($numPattern)\s+stok\s+(.+)"""),
+            // "stok chocolatos tambah 5" / "stok chocolatos plus 5"
+            Regex("""stok\s+(.+?)\s+(?:tambah|tambahkan|tambahin|plus|ditambah)\s+($numPattern)"""),
+            // "stok masuk chocolatos 5" / "stok masuk 5 chocolatos"
+            Regex("""stok\s+masuk\s+(.+?)\s+($numPattern)(?:\s|$)"""),
+            Regex("""stok\s+masuk\s+($numPattern)\s+(.+)""")
         )
         
         for (pattern in addStokPatterns) {
@@ -132,7 +150,7 @@ class NlpEngine {
     
     private fun tryParseSearchProduct(text: String): VuiCommand? {
         val searchPatterns = listOf(
-            Regex("""(?:cari|temukan|search)\s+(?:produk\s+)?(.+)"""),
+            Regex("""(?:cari|temukan|search)\s+(?:stok|produk|barang)?\s*(.+)"""),
             Regex("""(?:produk|barang)\s+(.+)""")
         )
         
@@ -142,7 +160,7 @@ class NlpEngine {
                 val match = pattern.find(text)
                 if (match != null) {
                     val query = match.groupValues[1].trim()
-                    if (query.isNotEmpty() && query.length > 2) {
+                    if (query.isNotEmpty() && query.length > 1) {
                         Log.d(TAG, "SEARCH_PRODUCT detected: query=$query")
                         return VuiCommand(
                             intent = "SEARCH_PRODUCT",
@@ -196,7 +214,7 @@ class NlpEngine {
             // Harga fields - handle Rp prefix and ribu/juta
             "harga_jual" to Regex("""(?:harga jual|harga)\s+(?:rp\.?\s*)?([0-9.]+)\s*(ribu|juta|rb|jt)?""", RegexOption.IGNORE_CASE),
             "harga_beli" to Regex("""(?:harga beli|modal)\s+(?:rp\.?\s*)?([0-9.]+)\s*(ribu|juta|rb|jt)?""", RegexOption.IGNORE_CASE),
-            "stok" to Regex("""(?:stok|jumlah stok|stok awal)\s+(\d+)"""),
+            "stok" to Regex("""(?:stok saat ini|jumlah stok|stok awal)\s+(\d+)"""),
             "kategori" to Regex("""(?:kategori)\s+(.+)"""),
             
             // Additional Add Product fields
@@ -290,16 +308,20 @@ class NlpEngine {
     // ===== QUICK ADD PRODUCT COMMAND (for beranda) =====
     
     private fun tryParseQuickAddProduct(text: String): VuiCommand? {
-        // Pattern: "tambah produk [nama produk] [harga]" - price is optional
-        val patternWithPrice = Regex("""(?:tambah produk|tambah barang)\s+(.+?)\s+(?:harga\s+)?(\d+)$""")
-        val patternNoPrice = Regex("""(?:tambah produk|tambah barang)\s+(.+)""")
+        // Extended verb+noun pattern: tambah/tambahkan/tambahin/bikin/buat + produk/barang
+        val verbNoun = """(?:tambah|tambahkan|tambahin|bikin|buat)\s+(?:produk|barang)(?:\s+baru)?"""
+        
+        // Pattern with price: "tambah produk X harga 5000" or "tambahkan produk X 5000"
+        val patternWithPrice = Regex("""$verbNoun\s+(.+?)\s+(?:harga\s+)?(\d+)$""")
+        // Pattern without price: "tambah produk X" / "tambahkan barang X"
+        val patternNoPrice = Regex("""$verbNoun\s+(.+)""")
         
         // Try with price first
         val matchWithPrice = patternWithPrice.find(text)
         if (matchWithPrice != null) {
             val productName = matchWithPrice.groupValues[1].trim()
             val price = matchWithPrice.groupValues[2]
-            if (productName.isNotEmpty() && productName != "produk" && productName != "barang") {
+            if (productName.isNotEmpty() && productName !in listOf("produk", "barang", "baru")) {
                 Log.d(TAG, "QUICK_ADD_PRODUCT detected: name=$productName, price=$price")
                 return VuiCommand(
                     intent = "QUICK_ADD_PRODUCT",
@@ -313,8 +335,8 @@ class NlpEngine {
         val matchNoPrice = patternNoPrice.find(text)
         if (matchNoPrice != null) {
             val productName = matchNoPrice.groupValues[1].trim()
-            // Only if product name is meaningful (not just "produk" or "barang")
-            if (productName.isNotEmpty() && productName != "produk" && productName != "barang") {
+            // Only if product name is meaningful
+            if (productName.isNotEmpty() && productName !in listOf("produk", "barang", "baru")) {
                 Log.d(TAG, "QUICK_ADD_PRODUCT detected: name=$productName (no price)")
                 return VuiCommand(
                     intent = "QUICK_ADD_PRODUCT",
@@ -330,36 +352,49 @@ class NlpEngine {
     // ===== QUICK SELL/BUY COMMANDS (for beranda) =====
     
     private fun tryParseQuickSell(text: String): VuiCommand? {
-        // Pattern: "jual [nama produk] [jumlah]" - quantity is optional at the end
-        val patternWithQty = Regex("""(?:jual|catat jual)\s+(.+?)\s+(\d+)$""")
-        val patternNoQty = Regex("""(?:jual|catat jual)\s+(.+)""")
+        // Extended verb patterns for selling
+        val sellVerb = """(?:jual|jualkan|catat jual|catat penjualan)"""
         
-        // Try with quantity first
-        val matchWithQty = patternWithQty.find(text)
-        if (matchWithQty != null) {
-            val productName = matchWithQty.groupValues[1].trim()
-            val quantity = matchWithQty.groupValues[2]
-            if (productName.isNotEmpty()) {
-                Log.d(TAG, "QUICK_SELL detected: product=$productName, quantity=$quantity")
-                return VuiCommand(
-                    intent = "QUICK_SELL",
-                    slots = mapOf("product_name" to productName, "quantity" to quantity),
-                    rawText = text
-                )
-            }
-        }
+        val sellPatterns = listOf(
+            // "jual chocolatos 5" / "jualkan chocolatos 5" / "catat penjualan chocolatos 5"
+            Regex("""$sellVerb\s+(.+?)\s+(\d+)$"""),
+            // "jual 5 chocolatos" / "jualkan 5 chocolatos"
+            Regex("""$sellVerb\s+(\d+)\s+(.+)"""),
+            // "jual chocolatos" (no quantity)
+            Regex("""$sellVerb\s+(.+)""")
+        )
         
-        // Try without quantity
-        val matchNoQty = patternNoQty.find(text)
-        if (matchNoQty != null) {
-            val productName = matchNoQty.groupValues[1].trim()
-            if (productName.isNotEmpty()) {
-                Log.d(TAG, "QUICK_SELL detected: product=$productName (no quantity)")
-                return VuiCommand(
-                    intent = "QUICK_SELL",
-                    slots = mapOf("product_name" to productName),
-                    rawText = text
-                )
+        for (pattern in sellPatterns) {
+            val match = pattern.find(text)
+            if (match != null) {
+                val groups = match.groupValues
+                if (groups.size >= 3) {
+                    // Pattern with quantity (2 capture groups)
+                    val (productName, quantityStr) = if (groups[1].matches(Regex("""\d+"""))) {
+                        Pair(groups[2].trim(), groups[1])
+                    } else {
+                        Pair(groups[1].trim(), groups[2])
+                    }
+                    if (productName.isNotEmpty()) {
+                        Log.d(TAG, "QUICK_SELL detected: product=$productName, quantity=$quantityStr")
+                        return VuiCommand(
+                            intent = "QUICK_SELL",
+                            slots = mapOf("product_name" to productName, "quantity" to quantityStr),
+                            rawText = text
+                        )
+                    }
+                } else {
+                    // Pattern without quantity (1 capture group)
+                    val productName = groups[1].trim()
+                    if (productName.isNotEmpty()) {
+                        Log.d(TAG, "QUICK_SELL detected: product=$productName (no quantity)")
+                        return VuiCommand(
+                            intent = "QUICK_SELL",
+                            slots = mapOf("product_name" to productName),
+                            rawText = text
+                        )
+                    }
+                }
             }
         }
         
@@ -367,53 +402,78 @@ class NlpEngine {
     }
     
     private fun tryParseQuickBuy(text: String): VuiCommand? {
-        // Pattern: "tambah stok [nama produk] [jumlah] kardus" - with kardus unit
-        val patternWithKardus = Regex("""(?:tambah stok|catat stok|masuk stok|beli)\s+(.+?)\s+(\d+)\s+kardus$""")
-        // Pattern: "tambah stok [nama produk] [jumlah]" - default (biji/satuan)
-        val patternWithQty = Regex("""(?:tambah stok|catat stok|masuk stok|beli)\s+(.+?)\s+(\d+)$""")
-        val patternNoQty = Regex("""(?:tambah stok|catat stok|masuk stok|beli)\s+(.+)""")
+        // Extended verb+stok patterns
+        val buyVerb = """(?:tambah|tambahkan|tambahin|catat|masuk|masukkan|isi|isikan)"""
         
-        // Try with kardus unit first
-        val matchWithKardus = patternWithKardus.find(text)
-        if (matchWithKardus != null) {
-            val productName = matchWithKardus.groupValues[1].trim()
-            val quantity = matchWithKardus.groupValues[2]
-            if (productName.isNotEmpty()) {
-                Log.d(TAG, "QUICK_BUY detected: product=$productName, quantity=$quantity, unit=kardus")
-                return VuiCommand(
-                    intent = "QUICK_BUY",
-                    slots = mapOf("product_name" to productName, "quantity" to quantity, "unit" to "kardus"),
-                    rawText = text
-                )
-            }
-        }
+        val buyPatterns = listOf(
+            // With kardus unit:
+            // "tambah stok chocolatos 5 kardus" / "tambahkan stok chocolatos 5 kardus"
+            Regex("""$buyVerb\s+stok\s+(.+?)\s+(\d+)\s+kardus$"""),
+            // "tambahkan 5 kardus stok chocolatos"
+            Regex("""$buyVerb\s+(\d+)\s+kardus\s+(?:stok\s+)?(.+)"""),
+            // "tambahkan 5 stok chocolatos kardus"
+            Regex("""$buyVerb\s+(\d+)\s+stok\s+(.+?)\s+kardus$"""),
+            
+            // Without kardus:
+            // "tambah stok chocolatos 5" / "tambahkan stok chocolatos 5"
+            Regex("""$buyVerb\s+stok\s+(.+?)\s+(\d+)$"""),
+            // "tambah stok 5 chocolatos" / "tambahkan stok 5 chocolatos"
+            Regex("""$buyVerb\s+stok\s+(\d+)\s+(.+)"""),
+            // "tambahkan 5 stok chocolatos" / "tambahin 5 stok chocolatos"
+            Regex("""$buyVerb\s+(\d+)\s+stok\s+(.+)"""),
+            // "stok masuk chocolatos 5"
+            Regex("""stok\s+masuk\s+(.+?)\s+(\d+)$"""),
+            // "stok masuk 5 chocolatos"
+            Regex("""stok\s+masuk\s+(\d+)\s+(.+)"""),
+            // "beli chocolatos 5" (standalone beli)
+            Regex("""beli\s+(.+?)\s+(\d+)$"""),
+            // "beli 5 chocolatos"
+            Regex("""beli\s+(\d+)\s+(.+)"""),
+            
+            // No quantity:
+            // "tambah stok chocolatos" / "tambahkan stok chocolatos"
+            Regex("""$buyVerb\s+stok\s+(.+)"""),
+            // "beli chocolatos"
+            Regex("""beli\s+(.+)""")
+        )
         
-        // Try with quantity (default to biji)
-        val matchWithQty = patternWithQty.find(text)
-        if (matchWithQty != null) {
-            val productName = matchWithQty.groupValues[1].trim()
-            val quantity = matchWithQty.groupValues[2]
-            if (productName.isNotEmpty()) {
-                Log.d(TAG, "QUICK_BUY detected: product=$productName, quantity=$quantity")
-                return VuiCommand(
-                    intent = "QUICK_BUY",
-                    slots = mapOf("product_name" to productName, "quantity" to quantity),
-                    rawText = text
-                )
-            }
-        }
-        
-        // Try without quantity
-        val matchNoQty = patternNoQty.find(text)
-        if (matchNoQty != null) {
-            val productName = matchNoQty.groupValues[1].trim()
-            if (productName.isNotEmpty()) {
-                Log.d(TAG, "QUICK_BUY detected: product=$productName (no quantity)")
-                return VuiCommand(
-                    intent = "QUICK_BUY",
-                    slots = mapOf("product_name" to productName),
-                    rawText = text
-                )
+        for (pattern in buyPatterns) {
+            val match = pattern.find(text)
+            if (match != null) {
+                val groups = match.groupValues
+                
+                // Check if this is a kardus pattern (first 3 patterns)
+                val isKardusPattern = text.contains("kardus")
+                
+                if (groups.size >= 3) {
+                    // Pattern with quantity (2 capture groups)
+                    val (productName, quantityStr) = if (groups[1].matches(Regex("""\d+"""))) {
+                        Pair(groups[2].trim(), groups[1])
+                    } else {
+                        Pair(groups[1].trim(), groups[2])
+                    }
+                    if (productName.isNotEmpty()) {
+                        val slots = mutableMapOf("product_name" to productName, "quantity" to quantityStr)
+                        if (isKardusPattern) slots["unit"] = "kardus"
+                        Log.d(TAG, "QUICK_BUY detected: product=$productName, quantity=$quantityStr${if (isKardusPattern) ", unit=kardus" else ""}")
+                        return VuiCommand(
+                            intent = "QUICK_BUY",
+                            slots = slots,
+                            rawText = text
+                        )
+                    }
+                } else {
+                    // Pattern without quantity (1 capture group)
+                    val productName = groups[1].trim()
+                    if (productName.isNotEmpty()) {
+                        Log.d(TAG, "QUICK_BUY detected: product=$productName (no quantity)")
+                        return VuiCommand(
+                            intent = "QUICK_BUY",
+                            slots = mapOf("product_name" to productName),
+                            rawText = text
+                        )
+                    }
+                }
             }
         }
         
@@ -471,9 +531,7 @@ class NlpEngine {
                 "tambah produk [nama] [harga]",
                 "jual [nama produk]",
                 "tambah stok [nama produk]",
-                "lihat produk",
-                "lihat stok",
-                "catat penjualan"
+                "cari stok [nama barang]"
             )
             "product_list" -> listOf(
                 "cari [nama produk]",
@@ -485,7 +543,7 @@ class NlpEngine {
                 "nama [nama produk]",
                 "harga [jumlah]",
                 "harga beli [jumlah]",
-                "stok [jumlah]",
+                "stok saat ini [jumlah]",
                 "sisa eceran [jumlah]",
                 "kategori [nama]",
                 "kemasan [kardus/satuan(pcs)]",
@@ -495,7 +553,7 @@ class NlpEngine {
             "tambah_stok" -> listOf(
                 "tambah stok [produk] [jumlah]",
                 "tambah stok [produk] [jumlah] kardus",
-                "stok [jumlah]",
+                "stok saat ini [jumlah]",
                 "sisa eceran [jumlah]",
                 "kembali",
                 "bantuan"

@@ -6,6 +6,10 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.plugin.common.EventChannel
+import android.content.Context
+import android.content.Intent
+import android.provider.Settings
+import android.text.TextUtils
 import android.util.Log
 
 /** VuiPlugin */
@@ -14,6 +18,7 @@ class VuiPlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler {
     private lateinit var eventChannel : EventChannel
     private var eventSink: EventChannel.EventSink? = null
     private var eventListener: ((String) -> Unit)? = null
+    private var applicationContext: Context? = null
     
     companion object {
         private const val TAG = "VuiPlugin"
@@ -25,6 +30,8 @@ class VuiPlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler {
 
         eventChannel = EventChannel(flutterPluginBinding.binaryMessenger, "vui_plugin/events")
         eventChannel.setStreamHandler(this)
+        
+        applicationContext = flutterPluginBinding.applicationContext
         
         Log.d(TAG, "VuiPlugin attached to engine")
     }
@@ -46,9 +53,47 @@ class VuiPlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler {
                 Log.d(TAG, "Available commands for ${NlpEngine.getContext()}: $commands")
                 result.success(commands)
             }
+            "isAccessibilityEnabled" -> {
+                val enabled = isAccessibilityServiceEnabled()
+                Log.d(TAG, "Accessibility service enabled: $enabled")
+                result.success(enabled)
+            }
+            "openAccessibilitySettings" -> {
+                try {
+                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    applicationContext?.startActivity(intent)
+                    result.success(true)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to open accessibility settings: ${e.message}")
+                    result.success(false)
+                }
+            }
             else -> {
                 result.notImplemented()
             }
+        }
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val context = applicationContext ?: return false
+        val serviceName = "${context.packageName}/com.example.vui_plugin.VuiAccessibilityService"
+        
+        try {
+            val enabledServices = Settings.Secure.getString(
+                context.contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            )
+            
+            if (enabledServices.isNullOrEmpty()) return false
+            
+            return TextUtils.SimpleStringSplitter(':').let { splitter ->
+                splitter.setString(enabledServices)
+                splitter.any { it.equals(serviceName, ignoreCase = true) }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking accessibility: ${e.message}")
+            return false
         }
     }
 

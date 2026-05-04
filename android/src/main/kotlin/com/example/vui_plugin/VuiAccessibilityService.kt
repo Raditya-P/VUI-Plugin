@@ -12,6 +12,8 @@ import android.speech.RecognitionListener
 import android.os.Bundle
 import android.os.Build
 import android.content.Context
+import android.content.pm.PackageManager
+import android.Manifest
 
 class VuiAccessibilityService : AccessibilityService() {
 
@@ -73,12 +75,14 @@ class VuiAccessibilityService : AccessibilityService() {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, "id-ID") // Indonesian
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true) // Prefer offline for speed
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 }
                 
                 speechRecognizer.setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) { 
-                        Log.d(TAG, "Ready for speech") 
+                        Log.d(TAG, "Ready for speech - mic should be active now")
+                        Log.d(TAG, "Device: ${Build.MANUFACTURER} ${Build.MODEL} (API ${Build.VERSION.SDK_INT})")
                         // Notify Flutter that listening has started
                         VuiEventBus.publish(VuiCommand(
                             intent = "SPEECH_STATE",
@@ -87,7 +91,7 @@ class VuiAccessibilityService : AccessibilityService() {
                         ))
                     }
                     override fun onBeginningOfSpeech() { 
-                        Log.d(TAG, "Beginning of speech") 
+                        Log.d(TAG, "Beginning of speech - audio input detected!") 
                     }
                     override fun onRmsChanged(rmsdB: Float) {}
                     override fun onBufferReceived(buffer: ByteArray?) {}
@@ -103,16 +107,43 @@ class VuiAccessibilityService : AccessibilityService() {
                         ))
                     }
                     override fun onError(error: Int) {
-                        Log.e(TAG, "Speech Error: $error (retry $retryCount/$MAX_RETRIES)")
+                        val errorName = when(error) {
+                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "ERROR_NETWORK_TIMEOUT"
+                            SpeechRecognizer.ERROR_NETWORK -> "ERROR_NETWORK"
+                            SpeechRecognizer.ERROR_AUDIO -> "ERROR_AUDIO"
+                            SpeechRecognizer.ERROR_SERVER -> "ERROR_SERVER"
+                            SpeechRecognizer.ERROR_CLIENT -> "ERROR_CLIENT"
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "ERROR_SPEECH_TIMEOUT"
+                            SpeechRecognizer.ERROR_NO_MATCH -> "ERROR_NO_MATCH"
+                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "ERROR_RECOGNIZER_BUSY"
+                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "ERROR_INSUFFICIENT_PERMISSIONS"
+                            else -> "UNKNOWN($error)"
+                        }
+                        Log.e(TAG, "Speech Error: $error ($errorName) - retry $retryCount/$MAX_RETRIES")
                         cancelWatchdog()
                         isListening = false
+                        
+                        // Handle permission revocation (error 9)
+                        if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                            Log.e(TAG, "RECORD_AUDIO permission was revoked by OS!")
+                            retryCount = 0
+                            // Notify Flutter to re-request permission from Activity context
+                            VuiEventBus.publish(VuiCommand(
+                                intent = "SPEECH_STATE",
+                                slots = mapOf("state" to "PERMISSION_LOST"),
+                                rawText = ""
+                            ))
+                            return
+                        }
                         
                         // Classify error type
                         val isTransient = error in listOf(
                             SpeechRecognizer.ERROR_NETWORK,
                             SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
                             SpeechRecognizer.ERROR_SERVER,
-                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
+                            SpeechRecognizer.ERROR_NO_MATCH,
+                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT
                         )
                         
                         if (isTransient && retryCount < MAX_RETRIES) {
@@ -239,30 +270,70 @@ class VuiAccessibilityService : AccessibilityService() {
         Log.d(TAG, "Service Interrupted")
     }
     
+    /// Check if RECORD_AUDIO permission is still granted
+    private fun hasMicrophonePermission(): Boolean {
+        return checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    }
+    
     // This method handles accessibility button click (called from our registered callback)
     private fun handleAccessibilityButtonClick() {
         Log.d(TAG, "Handling Accessibility Button Click")
+        
+        // Pre-check: verify RECORD_AUDIO permission is still granted
+        if (!hasMicrophonePermission()) {
+            Log.e(TAG, "RECORD_AUDIO permission not granted! Notifying Flutter to re-request.")
+            VuiEventBus.publish(VuiCommand(
+                intent = "SPEECH_STATE",
+                slots = mapOf("state" to "PERMISSION_LOST"),
+                rawText = ""
+            ))
+            return
+        }
+        
         if (!isListening) {
             isListening = true
             retryCount = 0
             handler.post {
                 try {
-                    // Cancel any previous session to avoid ERROR_RECOGNIZER_BUSY (error 8)
-                    speechRecognizer.cancel()
-                    // Small delay to allow cleanup
+                    // Always destroy and recreate the recognizer for a fresh microphone binding.
+                    // This prevents stale recognizer issues on Oppo/ColorOS devices where the
+                    // internal mic binding silently becomes invalid after idle periods.
+                    if (::speechRecognizer.isInitialized) {
+                        try {
+                            speechRecognizer.cancel()
+                            speechRecognizer.destroy()
+                            Log.d(TAG, "Previous recognizer destroyed for fresh session")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error destroying previous recognizer (non-fatal)", e)
+                        }
+                    }
+                    // Small delay to allow cleanup before recreating
                     handler.postDelayed({
                         try {
+                            // Double-check permission right before starting (race condition guard)
+                            if (!hasMicrophonePermission()) {
+                                Log.e(TAG, "Permission lost between button press and listening start")
+                                isListening = false
+                                VuiEventBus.publish(VuiCommand(
+                                    intent = "SPEECH_STATE",
+                                    slots = mapOf("state" to "PERMISSION_LOST"),
+                                    rawText = ""
+                                ))
+                                return@postDelayed
+                            }
+                            // Create fresh recognizer with new mic binding
+                            setupSpeechRecognizer()
                             startWatchdog()
                             speechRecognizer.startListening(speechIntent)
-                            Log.d(TAG, "Starting listening...")
+                            Log.d(TAG, "Starting listening with fresh recognizer...")
                         } catch (e: Exception) {
                             Log.e(TAG, "Start listening failed", e)
                             isListening = false
                             cancelWatchdog()
                         }
-                    }, 100)
+                    }, 150)
                 } catch (e: Exception) {
-                     Log.e(TAG, "Cancel or start listening failed", e)
+                     Log.e(TAG, "Cleanup or start listening failed", e)
                      isListening = false
                 }
             }
