@@ -10,8 +10,10 @@ A Flutter plugin for **Voice User Interface (VUI)** using Android Accessibility 
 - 🎙️ **On-device speech recognition** — Prefers offline processing for speed and privacy
 - 🧠 **Rule-based NLP** — Indonesian keyword spotting & slot filling, no cloud dependency
 - ♿ **Accessibility Service** — Uses Android Accessibility Button for system-wide voice activation
+- 🔊 **Volume-key trigger** — Double-press volume-down as fallback for gesture navigation devices
+- 🔄 **Google Speech auto-binding** — Forces Google engine on Samsung/OEM devices, auto-fallback to default if unresponsive
 - 📡 **Event-driven architecture** — Pub/sub pattern via EventBus for loose coupling
-- 🔄 **Auto-retry & watchdog** — Robust error recovery with automatic retries on transient failures
+- 🔁 **Auto-retry & watchdog** — Robust error recovery with automatic retries on transient failures
 - 📱 **Context-aware commands** — Different voice commands available per screen
 - 🗣️ **Live transcription** — Real-time partial speech results for responsive UI feedback
 
@@ -60,10 +62,11 @@ Create `android/app/src/main/res/xml/accessibility_service_config.xml`:
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityFlags="flagDefault|flagRequestAccessibilityButton"
-    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagRequestAccessibilityButton|flagRequestFilterKeyEvents"
+    android:accessibilityFeedbackType="feedbackSpoken"
     android:notificationTimeout="100"
-    android:canRetrieveWindowContent="false"
+    android:canRetrieveWindowContent="true"
+    android:canRequestFilterKeyEvents="true"
     android:description="@string/accessibility_service_description"
     android:settingsActivity="com.example.app.MainActivity" />
 ```
@@ -149,9 +152,9 @@ The plugin emits `SPEECH_STATE` events for UI feedback:
 | Intent | Description | Example Voice Command |
 |--------|-------------|-----------------------|
 | `SET_FIELD` | Fill a form field | "harga jual 5000" |
-| `QUICK_SELL` | Quick sale action | "jual indomie 3" |
-| `QUICK_BUY` | Quick stock addition | "tambah stok indomie 10" |
-| `ADD_PRODUCT` | Navigate to add product | "tambah produk" |
+| `QUICK_SELL` | Quick sale action | "jual indomie 3" / "jualkan 3 indomie" |
+| `QUICK_BUY` | Quick stock addition | "tambah stok indomie 10" / "tambahkan 10 stok indomie" |
+| `ADD_PRODUCT` | Navigate to add product | "tambah produk" / "bikin produk baru" |
 | `SEARCH_PRODUCT` | Search for a product | "cari indomie" |
 | `NAV_BACK` | Navigate back | "kembali" |
 | `SHOW_HELP` | Show help overlay | "bantuan" |

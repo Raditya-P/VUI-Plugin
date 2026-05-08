@@ -3,7 +3,7 @@ description: >
   A Flutter plugin for Voice User Interface (VUI) using Android Accessibility Service.
   Provides on-device speech recognition with rule-based NLP for Indonesian language,
   enabling voice-controlled navigation, form filling, and command execution.
-version: 0.1.1
+version: 1.0.0
 homepage: https://github.com/Raditya-P/VUI-Plugin
 repository: https://github.com/Raditya-P/VUI-Plugin
 issue_tracker: https://github.com/Raditya-P/VUI-Plugin/issues
