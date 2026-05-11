@@ -526,48 +526,11 @@ class NlpEngine {
      * Get available commands for current screen (for help overlay)
      */
     fun getAvailableCommands(): List<String> {
-        return when (currentScreen) {
-            "beranda" -> listOf(
-                "tambah produk [nama] [harga]",
-                "jual [nama produk]",
-                "tambah stok [nama produk]",
-                "cari stok [nama barang]"
-            )
-            "product_list" -> listOf(
-                "cari [nama produk]",
-                "tambah produk",
-                "kembali",
-                "bantuan"
-            )
-            "add_product", "edit_product" -> listOf(
-                "nama [nama produk]",
-                "harga [jumlah]",
-                "harga beli [jumlah]",
-                "stok saat ini [jumlah]",
-                "sisa eceran [jumlah]",
-                "kategori [nama]",
-                "kemasan [kardus/satuan(pcs)]",
-                "kulakan [langsung/supplier]",
-                "kembali"
-            )
-            "tambah_stok" -> listOf(
-                "tambah stok [produk] [jumlah]",
-                "tambah stok [produk] [jumlah] kardus",
-                "stok saat ini [jumlah]",
-                "sisa eceran [jumlah]",
-                "kembali",
-                "bantuan"
-            )
-            "kasir" -> listOf(
-                "jual [nama produk] [jumlah]",
-                "kembali",
-                "bantuan"
-            )
-            else -> listOf(
-                "kembali",
-                "beranda",
-                "bantuan"
-            )
-        }
+        return listOf(
+            "tambah produk [nama produk]",
+            "jual [nama produk] [jumlah produk]",
+            "tambah stok [nama produk] [jumlah produk]",
+            "cari stok [nama produk]"
+        )
     }
 }

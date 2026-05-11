@@ -1,3 +1,8 @@
+## 1.0.1
+
+* Simplified help commands: unified 4 global commands shown on all screens
+* Help overlay no longer changes per screen context
+
 ## 1.0.0
 
 * **Stable release** 🎉
