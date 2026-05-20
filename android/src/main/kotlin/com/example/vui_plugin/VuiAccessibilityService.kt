@@ -31,8 +31,8 @@ class VuiAccessibilityService : AccessibilityService() {
     private var accessibilityButtonCallback: AccessibilityButtonCallback? = null
     private var isAccessibilityButtonAvailable = false
     
-    // Engine fallback: try Google first, fall back to default if Google silently fails
-    private var useGoogleEngine = true  // Start with Google, auto-switch on failure
+    // Engine fallback: try default Android engine first, fall back to Google if default silently fails
+    private var useDefaultEngine = true  // Start with default Android engine, auto-switch on failure
     private var readyTimeoutRunnable: Runnable? = null
     private val READY_TIMEOUT_MS = 3000L // 3s: if no onReadyForSpeech, engine is dead
     
@@ -151,17 +151,20 @@ class VuiAccessibilityService : AccessibilityService() {
         }
         
         try {
-            if (useGoogleEngine && isGoogleSpeechAvailable()) {
-                // Try Google Speech engine first for reliable Indonesian recognition.
-                // Samsung/Xiaomi/Oppo may default to their own engine that doesn't support id-ID.
+            if (useDefaultEngine) {
+                // Try base Android (default) engine first — works natively on most devices.
+                Log.d(TAG, "Creating SpeechRecognizer with default (base Android) engine")
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+            } else if (isGoogleSpeechAvailable()) {
+                // Fallback: use Google Speech engine if default engine silently failed.
                 val googleSpeechComponent = ComponentName(
                     "com.google.android.googlequicksearchbox",
                     "com.google.android.voicesearch.serviceapi.GoogleRecognitionService"
                 )
-                Log.d(TAG, "Creating SpeechRecognizer with Google Speech engine")
+                Log.d(TAG, "Creating SpeechRecognizer with Google Speech engine (fallback)")
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this, googleSpeechComponent)
             } else {
-                Log.d(TAG, "Creating SpeechRecognizer with default engine")
+                Log.d(TAG, "Creating SpeechRecognizer with default engine (Google not available)")
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
             }
             
@@ -170,15 +173,20 @@ class VuiAccessibilityService : AccessibilityService() {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "id-ID") // Indonesian
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                // Only request offline mode for Google engine.
+                // Default engines on Oppo/ColorOS often lack offline Indonesian models
+                // and will immediately error out if this flag is set.
+                if (!useDefaultEngine) {
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                }
             }
             
             speechRecognizer.setRecognitionListener(createRecognitionListener())
         } catch (e: Exception) {
-            if (useGoogleEngine) {
-                Log.e(TAG, "Google engine threw exception, switching to default engine", e)
-                useGoogleEngine = false
-                setupSpeechRecognizer() // Retry with default
+            if (useDefaultEngine) {
+                Log.e(TAG, "Default engine threw exception, switching to Google engine", e)
+                useDefaultEngine = false
+                setupSpeechRecognizer() // Retry with Google
             } else {
                 Log.e(TAG, "Failed to create SpeechRecognizer entirely", e)
             }
@@ -192,7 +200,7 @@ class VuiAccessibilityService : AccessibilityService() {
     private fun createRecognitionListener(): RecognitionListener {
         return object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) { 
-                Log.d(TAG, "Ready for speech - mic should be active now (engine: ${if (useGoogleEngine) "Google" else "Default"})")
+                Log.d(TAG, "Ready for speech - mic should be active now (engine: ${if (useDefaultEngine) "Default" else "Google"})")
                 // Cancel the ready-timeout since engine responded successfully
                 cancelReadyTimeout()
                 // Notify Flutter that listening has started
@@ -289,6 +297,23 @@ class VuiAccessibilityService : AccessibilityService() {
                 
                 // Max retries exceeded or non-transient error
                 retryCount = 0
+                
+                // If default engine failed after all retries, fall back to Google engine
+                if (useDefaultEngine && isGoogleSpeechAvailable()) {
+                    Log.w(TAG, "Default engine failed after $MAX_RETRIES retries. Falling back to Google engine.")
+                    useDefaultEngine = false
+                    cancelReadyTimeout()
+                    handler.postDelayed({
+                        try {
+                            speechRecognizer.destroy()
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error destroying failed default engine (non-fatal)", e)
+                        }
+                        // Auto-retry with Google engine
+                        handleAccessibilityButtonClick()
+                    }, 300)
+                    return // Don't send error to Flutter — trying Google engine next
+                }
                 
                 // Recreate recognizer to ensure clean state for next press
                 handler.postDelayed({
@@ -466,7 +491,7 @@ class VuiAccessibilityService : AccessibilityService() {
                             startWatchdog()
                             startReadyTimeout() // Auto-fallback if engine doesn't respond
                             speechRecognizer.startListening(speechIntent)
-                            Log.d(TAG, "Starting listening with fresh recognizer (engine: ${if (useGoogleEngine) "Google" else "Default"})...")
+                            Log.d(TAG, "Starting listening with fresh recognizer (engine: ${if (useDefaultEngine) "Default" else "Google"})...")
                         } catch (e: Exception) {
                             Log.e(TAG, "Start listening failed", e)
                             isListening = false
@@ -523,18 +548,18 @@ class VuiAccessibilityService : AccessibilityService() {
     private fun startReadyTimeout() {
         cancelReadyTimeout()
         readyTimeoutRunnable = Runnable {
-            if (isListening && useGoogleEngine) {
-                Log.w(TAG, "Ready-timeout! Google engine did not respond in ${READY_TIMEOUT_MS}ms. Switching to default engine.")
-                useGoogleEngine = false
+            if (isListening && useDefaultEngine) {
+                Log.w(TAG, "Ready-timeout! Default engine did not respond in ${READY_TIMEOUT_MS}ms. Switching to Google engine.")
+                useDefaultEngine = false
                 isListening = false
                 cancelWatchdog()
                 try {
                     speechRecognizer.cancel()
                     speechRecognizer.destroy()
                 } catch (e: Exception) {
-                    Log.w(TAG, "Error destroying unresponsive Google engine (non-fatal)", e)
+                    Log.w(TAG, "Error destroying unresponsive default engine (non-fatal)", e)
                 }
-                // Retry with default engine
+                // Retry with Google engine
                 handler.postDelayed({
                     handleAccessibilityButtonClick()
                 }, 200)

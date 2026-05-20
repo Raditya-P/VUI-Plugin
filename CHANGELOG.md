@@ -1,3 +1,9 @@
+## 1.0.2
+
+* **Engine priority reversed**: Default Android speech engine is now tried first, with Google Speech Services as fallback
+* **Fixed voice capture error on Oppo/ColorOS**: `EXTRA_PREFER_OFFLINE` is now only applied to Google engine — default engines often lack offline Indonesian models and would immediately error
+* **Improved engine fallback**: When the default engine fails after max retries, the plugin automatically switches to Google engine instead of reporting an error
+
 ## 1.0.1
 
 * Simplified help commands: unified 4 global commands shown on all screens
